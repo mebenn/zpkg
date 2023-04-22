@@ -1,0 +1,679 @@
+#!/bin/env bash
+#
+About="This application with all files and contents are supplied under the terms of the
+Common Development and Distribution License ("CDDL"), version 1.0.
+You may only use this file in accordance with the terms of version 1.0 of the CDDL.
+
+A full copy of the text of the CDDL should have accompanied this source.  
+A copy of the CDDL is also available via the Internet at http://www.illumos.org/license/CDDL.
+
+Copyright (C) 2023 benny.lyons@gmx.net"
+
+#
+# Requirements
+# This list contains a list of software required for this script to run
+# If you extend and add a binary, just add it here to check whether it is installed
+
+VERSION=0.01
+
+list_of_required_apps="zenity gawk"
+
+#
+# Currently Supported
+#
+# general operations
+supported_general_operations=("System update" "Publishers" "List mediators" \
+                              "Manage local packages" "Manage remote packages"\
+                              "..." "About")
+# package operations
+supported_package_opts=("Information" "List" "Install" "Update" "Uninstall" \
+                       "History" "Verify" "Fix" "Quit" )
+
+
+width=0
+height=0
+COPY=false
+
+help()
+{
+    cat<<EOF
+    Usage: $0 <options> 
+
+    Uses .gsvc to read configuration.
+    First look for .gsvcs in current dir, then
+    in $HOME, if not present, exits
+    This application uses zenity, so please ensure that it is
+    installed before running (pkg install gnome/zenity)
+
+    OPTIONS
+    -d output debug information
+    -h help, this text
+    -t <int> trial, only for development
+     int
+      1   might work, but very slow. split into rows and manipulate each row 
+    -x <> set the width of the package dialogue
+       This value is also scaled for other dialogues.
+       Default: 900
+    -y <> set the height of the package dialogue
+       This value is also scaled for other dialogues.
+       Default: 600
+
+    PROBLEMS
+    Listed here are a number of known problems:
+
+    - For remote publishers, no status is displayed (although this works
+      for local packages). Zenity cannot display this field, so deactivated.
+    - Currently a mixture between GUI and command line script; however the
+      script can be run solely as a GUI application. Think of command line
+      operation as useful for developers.
+
+
+    VERSION
+    $VERSION
+ 
+EOF
+}
+
+
+# Check that all apps listed in $list_of_required_apps are installed
+check_required_software()
+{
+        for app in $list_of_required_apps ; do
+                if ! command -v "$app"   > /dev/null; then
+                        zenity --error   --title "Could not find $app" \
+                               --text "Could not find $app which is required. Please install."
+                         exit 1
+                fi
+        done
+}
+
+
+check_opt_x_y()
+{
+        the_x="$1"
+        the_y="$2"
+        
+        if [  -z "$the_x" ]; then
+                opt_x="900"
+        fi
+        if [  -z "$the_y" ]; then
+                opt_y="600"
+        fi
+}
+
+
+init_log()
+{
+        the_debug="$1"
+        logfile=$1
+
+        # don't want logfiles cluttering up the dir
+        # overwrite log file
+        if [ "$the_debug" == "true" ]; then
+                print "" > "$0"".log"
+        fi
+}
+
+display_runtime()
+{
+        debug="$1"
+        secs=$2
+        msg="$3"
+        
+        if [ "$debug" == "true" ]; then
+                elapsed=$secs
+                echo "PROGRESS: $(($elapsed / 60)):$(($elapsed % 60)) $msg"
+        fi
+}
+
+
+get_logo()
+{
+        oilogo="$1"
+
+        if [ ! -f "$oilogo" ]; then
+                zenity --warning   --title "OI icon not found" \
+                       --window-icon="$oilogo" \
+                       --text "Could not find $oilogo"
+        fi
+}
+
+
+do_system_update()
+{
+        the_x="$1"
+        the_y="$2"
+
+        let the_width=$the_x/3
+        let the_height=$the_y/2
+
+        gksudo pkg update  2>&1 | zenity --text-info --window-icon="$oilogo" \
+                                         --title "Updating System" \
+                                         --width $the_width --height $the_height
+}
+
+
+list_mediators()
+{
+        zenity --info --no-wrap --window-icon="$oilogo" --title "Mediators" \
+               --text   "$(pkg mediator)"
+}
+
+
+do_about()
+{
+        zenity --info --window-icon="$oilogo" --no-wrap \
+               --title "About"\
+               --text  "$About\n\nVersion: $VERSION"
+}
+
+
+get_publishers()
+{
+        the_publishers="$(pkg publisher -H -F tsv)"
+        pub=$(echo "$the_publishers" | awk -F' ' '{printf ("FALSE %s %s %s %s %s %s\n", $1, $2, $4, $5, $6, $7, $8)}')
+}
+
+
+display_and_select_publisher()
+{
+        the_x="$1"
+        the_y="$2"
+
+        let the_width=$the_x
+        let the_height=$the_y/2
+
+        selected_publisher=$(zenity --list --radiolist --width=$the_width --height=$the_height \
+                                    --window-icon="$oilogo" --title "Publishers" \
+                                    --column "Selected" --column "Publisher" \
+                                    --column "Sticky" --column "Enabled" \
+                                    --column "Type"  --column "Status" --column="URL" $pub)
+}
+
+
+display_info_on_publisher()
+{
+        ret_display_info_on_publisher=0
+        zenity --info   --no-wrap --window-icon="$oilogo"  --title "Publisher Details" \
+               --text   "$(pkg publisher $selected_publisher)"
+        if [[ $? -eq 1 ]]; then
+                ret_display_info_on_publisher=1
+        fi
+}
+
+display_general_options()
+{
+        the_x="$1"
+        the_y="$2"
+
+        let the_width=$the_x/3
+        let the_height=$the_y/2
+
+        rc=0
+        selected_general_option=$(zenity --height=$the_height --width=$the_width --list --radiolist \
+                     --window-icon="$oilogo" \
+                     --title "Perform general operation" --text "$selected" \
+                     --column 'Select...'  \
+                     --column 'Operation' FALSE "${supported_general_operations[0]}" \
+                     FALSE "${supported_general_operations[1]}" FALSE "${supported_general_operations[2]}" \
+                     FALSE "${supported_general_operations[3]}" FALSE "${supported_general_operations[4]}" \
+                     FALSE "${supported_general_operations[5]}" FALSE "${supported_general_operations[6]}" )
+
+        if [[ $? -eq 1 ]]; then
+                rc=1
+        fi
+}
+
+
+#
+# Present the user with a list of operations to perfom on a package
+# The supoported operations are in listed in $supported_package_opts
+# The operation selected by the user is placed in
+# $selected_package_option
+display_package_options()
+{
+        the_x="$1"
+        the_y="$2"
+
+        let the_width=$the_x/3
+        let the_height=$the_y/2
+
+        for  col in "${supported_package_opts[@]}"; do
+                cols="${cols[@]}""FALSE $col "
+        done
+
+        rc=0
+        selected_package_option=$(zenity --height=$the_height --width=$the_height --list --radiolist \
+                                         --window-icon="$oilogo" \
+                                         --title "Select an action to perform on package" --text "$selected" \
+                                        --column 'Select...'  \
+                                        --column 'Package actions' \
+                                        ${cols[@]})
+        if [[ $? -eq 1 ]]; then
+                rc=1
+        fi
+}
+
+
+get_mediators()
+{
+        the_mediators="$(pkg mediator -H -F tsv)"
+        med=$(echo "$the_mediators" | awk -F' ' '{printf("%s %s %s %s %s\n", $1, $2, $3, $4, $5)}')
+}
+
+
+process_selected_general_option()
+{
+        selection=$1
+        the_x="$2"
+        the_y="$3"
+
+        loocal_remote=""
+
+        let the_width=$the_x/3
+        let the_height=$the_y/2
+
+        
+        if [ "$selection" == "System update" ]; then
+                do_system_update "$the_x" "$the_y"
+        elif [ "$selection" == "Publishers" ]; then
+                get_publishers 
+                
+                display_and_select_publisher "$the_x" "$the_y" 
+                if [ ! -z "$selected_publisher" ]; then
+                        display_info_on_publisher "$selected_publisher"
+                fi                
+                if [[ ret_display_info_on_publisher -eq 1 ]]; then
+                        rc=1
+                fi
+        elif [ "$selection" == "List mediators" ]; then
+                list_mediators
+        elif [[ $selection == "Manage local"* ]]; then
+                local_remote="local"
+                rc=1
+        elif [[ $selection == "Manage remote"* ]]; then
+                local_remote="remote"
+                rc=1
+        elif [ "$selection" == "About" ]; then
+                do_about
+        fi        
+}
+
+
+get_packages()
+{
+        local_remote="$1"
+
+        if [ "$local_remote" == "remote" ]; then
+                opts="list -a"
+        else
+                opts="list"
+        fi
+
+        pkg_list=$(pkg $opts)
+        #pkg $opts 2>&1 | zenity --text-info --title "pkg list $selected package" --width 600 --height 300
+}
+
+
+get_packages_sum()
+{
+        y="$1"
+        total_packages=${#y[@]}
+        total_packages=$(( total_packages - 1 ))
+}
+
+
+function get_package_infos_from_list()
+{
+        for  i in "${y[@]}" ; do
+                col1=$(echo $i | awk -F' ' '{print $1}')
+                tmp=${i#*(}   # remove prefix ending in "("
+                col2=${tmp%)*}   # remove suffix starting with ")"
+                
+                col3=$(echo $i | awk -F' ' '{print $3}')
+                col4=$(echo $i | awk -F' ' '{print $4}')
+                                
+                #lines=("${lines[@]}" "FALSE" "$title" "$col1" "$col2" "$col3" "$col4")
+                lines=("${lines[@]}"  "$title" "$col1" "$col2" "$col3" "$col4")
+        done
+}
+
+
+get_package_infos_using_awk()
+{
+        what="$1"
+        localremote="$2"
+
+        
+        if [ "$localremote" == "local" ]; then
+                pkg_list_columns=$(echo "$what" | gawk -F' ' '{printf("FALSE\t%s\t%s\t%s\t%s\n", $1, $2, $3, $4)}')
+        else
+                pkg_list_columns=$(echo "$what" | gawk -F' ' '{printf("FALSE\t%s\t%s\t%s\n", $1, $2, $3)}')
+        fi
+        #echo "$pkg_list_columns"
+        #exit 0
+}
+
+
+# Retrieving package information eithert using arrays or using awk
+# -t 1 selects the array method
+# default selects the awk method
+# In the future there will be only be the default method
+get_package_infos ()
+{
+        pkglist="$1"
+        trial="$2"
+        localremote="$3"
+
+        if [ "$trial" == "1" ]; then
+                readarray -t y <<<"$pkglist"
+                get_packages_sum "$y"
+                get_package_infos_from_list "${y[@]}" 
+        else
+                get_package_infos_using_awk "$pkglist" "$localremote"
+        fi
+}
+
+
+rm_header()
+{
+        these_cols="$1"
+        pkg_list_columns=$(echo "$these_cols" | awk 'NR>1')
+}
+
+
+standard_output_for_publisher ()
+{
+        these_cols=$1
+
+
+        # If no publisher add '(-)' for the missing publisher
+        pkg_list_columns=$(echo "$these_cols" | awk '
+        BEGIN {}
+              { if (NF==4 && $0 !~ /\(/) print $1,"\t", $2, "\t", "(-)", "\t", $3, "\t", $4}
+              { if (NF==4 && $0 ~ /\(/) print $1,"\t", $2, "\t", $3, "\t", $4}
+              { if (NF==5 && $0 ~ /\(/) print $1,"\t", $2, "\t", $3, "\t", $4, "\t", $5}
+              # if (NF==4) print $1, $2, "(-)", $3, $4}
+        END {}
+        ')
+}
+
+
+manipulate_columns()
+{
+        pkg_list_columns="$1"
+        
+        rm_header "$pkg_list_columns"
+        standard_output_for_publisher "$pkg_list_columns"
+}
+
+
+
+get_total_packages()
+{
+        these_cols=$1
+        total_packages=$(echo "$these_cols" | awk '/./ { COUNT+=1 } END { print COUNT }')
+}
+
+
+display_and_get_selected_package_using_list()
+{
+        the_x="$opt_x"
+        the_y="$opt_y"
+       
+        selected_package=$(zenity --list --window-icon="$oilogo"  --radiolist  --width=$the_x --height=$the_y \
+                          --title="Packages" --text="Number of Packages: $total_packages"\
+                          --column="Select"   --column="Package" \
+                          --column="Publisher" \
+                          --column="Version" --column="Status" "${lines[@]}")
+}
+
+
+get_local_infos()
+{
+        pkg_list_columns="$1"
+        the_x="$2"
+        the_y="$3"
+        
+        selected_package=$(zenity  --list --radiolist  --width=$the_x --height=$the_y\
+                                   --window-icon="$oilogo" \
+                                   --title="List of Packages" --text="Number of Packages: $total_packages"\
+                                   --column="Select" \
+                                   --column="Package" \
+                                   --column="Publisher" \
+                                   --column="Version"  \
+                                   --column="Status" \
+                                   $(echo "$pkg_list_columns" | awk -F'\t' '{printf("%s %s %s %s %s\n",  $1, $2, $3, $4, $5)}'))
+}
+
+#
+# This is exactly the same as get_local_infos() except the status field is removed
+#
+get_remote_infos()
+{
+        pkg_list_columns="$1"
+        the_x="$2"
+        the_y="$3"
+
+        selected_package=$(zenity  --list --radiolist  --width=$the_x --height=$the_y\
+                                   --window-icon="$oilogo" \
+                                   --title="List of Packages" --text="Number of Packages: $total_packages"\
+                                   --column="Select" \
+                                   --column="Package" \
+                                   --column="Publisher" \
+                                   --column="Version"  \
+                                   $(echo "$pkg_list_columns" | awk -F'\t' '{printf("%s %s %s %s\n",  $1, $2, $3, $4)}'))
+}
+
+#
+# Currently treating remote and local package repos differently because the status
+# field returned by remote is causing parsing problems. Consequently, status information 
+# from remote repos is removed.
+display_and_get_selected_package_using_awk()
+{
+        pkg_list_columns="$1"
+        local_remote="$2"
+        the_x="$3"
+        the_y="$4"
+
+
+        #selected_package=$(zenity --list    --width=$the_x --height=$the_y\
+        #        --title="List of Packages" --text="Number of Packages: $total_packages"\
+        #        --column="Select..." \
+        #        $(echo "$pkg_list_columns" | awk -F' ' '{printf("%s\n",  $5)}'))
+                
+        
+        #
+        # Zenity has a problem displaying the status field, but only for a remote publisher
+        # It is difficult to analyze. For now remove it for remote publishers 
+        #
+        if [ "$local_remote" == "local" ]; then
+                 get_local_infos "$pkg_list_columns" "$the_x" "$the_y"
+        else
+                 get_remote_infos "$pkg_list_columns" "$the_x" "$the_y"
+
+        fi
+}
+
+
+process_selected_package_option()
+{
+        this_opt="$1"
+        selected_package="$2"
+        local_remote="$3"
+        
+        the_x="$opt_y"
+        the_y="$opt_x"
+
+        if [ "$local_remote" == "remote" ]; then
+                info="info -r"
+                contents="contents -r"
+        else
+                info="info"
+                contents="contents"
+        fi
+
+        if [ "$this_opt" == "Information" ]; then
+                zenity --info   --window-icon="$oilogo" --title "Information on $selected_package" \
+                       --text   "$(pkg $info $selected_package)"
+        elif [ "$this_opt" == "List files" ]; then
+                zenity --list --width=$the_x --height=$the_y \
+                       --window-icon="$oilogo" \
+                       --title "List of files in $selected_package"\
+                       --text ""   --column " " "$(pkg $contents $selected_package)"
+        elif [ "$this_opt" == "Install" ]; then
+                gksudo pkg install $selected_package 2>&1 | zenity --window-icon="$oilogo" --text-info --title "Installing $selected package" --width 600 --height 300
+        elif [ "$this_opt" == "Update" ]; then
+                #gksudo stdbuf -o pkg update $selected_package | zenity --title "Updating $selected_package" --progress --pulsate --auto-close --auto-kill
+                gksudo pkg update $selected_package 2>&1 | zenity --text-info --window-icon="$oilogo" --title "Updating $selected package" --width 600 --height 300
+                #zenity --info --title "Update $selected_package"\
+                 #      --text   "$(pkg update $selected_package)"
+        elif [ "$this_opt" == "Uninstall" ]; then
+                #zenity --info --title "Infos"\
+                        #       --text   "TODO"
+                gksudo pkg uninstall $selected_package 2>&1 | zenity --window-icon="$oilogo" --text-info --title "Uninstalling $selected package" --width 600 --height 300
+        elif [ "$this_opt" == "History" ]; then
+                zenity --list --width=$the_x --height=$the_y\
+                       --window-icon="$oilogo" \
+                       --title "History of $selected_package" \
+                       --text  "" --column " " "$(pkg history $selected_package)"
+        elif [ "$this_opt" == "Verify" ]; then
+                zenity --info --window-icon="$oilogo" \
+                       --title "Verify $selected_package"\
+                       --text  "$(pkg verify $selected_package)"
+        elif [ "$this_opt" == "Fix" ]; then
+                zenity --info --window-icon="$oilogo" \
+                       --title "Fix $selected_package"\
+                       --text  "$(pkg fix $selected_package)"
+        elif [ "$this_opt" == "Quit" ]; then
+                exit 0
+        fi
+}
+
+
+
+main()
+{
+        #
+        # Options
+        #
+        SECONDS=0
+        while getopts "dht:x:y:" opt; do
+	        case $opt in        
+			h)
+				help
+				exit 0
+				;;
+                        d)
+                                opt_debug=true
+                                ;;
+                        t)
+                                input_trial=$OPTARG
+                                ;;
+                        x)
+                                opt_x=$OPTARG
+                                ;;
+                        y)
+                                opt_y=$OPTARG
+                                ;;
+			\?)
+				echo "Don't know this option"
+				exit 0
+				;;
+		esac
+	done
+
+
+
+        check_required_software
+        check_opt_x_y "$opt_x" "$opt_y"
+        init_log "$opt_debug"
+        get_logo "/usr/share/pixmaps/aboutOI.png"
+
+        
+        if [ "$input_trial" == "1" ]; then
+                lines=()
+        fi
+        
+        #
+        # Display general options
+        #
+        # users selection in
+        # selected_general_option
+        while true; do
+                display_general_options "$opt_x" "$opt_y"
+                if [ "${rc}" == "1" ]; then
+                        break
+                fi
+                process_selected_general_option "$selected_general_option" "$opt_x" "$opt_y"
+                if [ "${rc}" == "1" ]; then
+                        break
+                fi
+        done
+
+        # pkg list or pkg list -a
+        get_packages "$local_remote"
+        # runtime
+        display_runtime "$opt_debug" $SECONDS "...after get_packages"
+
+        #
+        # columns
+        # return pkg_list_columns
+        get_package_infos "$pkg_list" "$input_trial"  "$local_remote"
+        display_runtime "$opt_debug" $SECONDS "...after get_package_infos"
+
+        #
+        # remove header
+        # Some entries include a publisher in brackets some not
+        # Produce some standard format 
+        manipulate_columns "$pkg_list_columns"
+        
+        # number of packages
+        get_total_packages "$pkg_list_columns"
+        #echo "$total_packages"
+        if [ "$opt_debug" == "true" ]; then
+                printf "%s\n" $pkg_list_columns >> "$0"".log"
+        fi
+
+
+        
+        while true; do
+                if [ "$input_trial" == "1" ]; then
+                        display_and_get_selected_package_using_list "${lines[@]}"
+                        display_runtime "$opt_debug" $SECONDS "....after ..._using_list"
+                else
+                        # Initially all packages were as an array. The array was looped
+                        # through each package, but this proved painfully slow: awk was fast
+                        # Retain 'awk' in name as a reminder NEVER return to looping
+                        # through array elements
+                        display_and_get_selected_package_using_awk "$pkg_list_columns" "$local_remote" "$opt_x" "$opt_y"
+                        display_runtime "$opt_debug" $SECONDS "....after ..._using_awk"
+                fi
+                if [ "$opt_debug" == "true" ] ; then
+                        printf "\nSelected this package: %s\n" "$selected_package" >> "$0"".log"
+                fi
+
+                #
+                # Display package options
+                #
+                # User selection in
+                # selected_package_option
+                display_package_options "$opt_x" "$opt_y"
+                if [ "${rc}" == "1" ]; then
+                        # selected cancel, so exit
+                        break
+                fi
+                
+                process_selected_package_option "$selected_package_option" "$selected_package" "$local_remote"    
+                if [ "${rc}" == "1" ]; then
+                        # selected cancel, so exit
+                        break
+                fi
+                if [ "$opt_debug" == "true" ] ; then
+                        printf "\nPerforming %s on %s\n"\
+                        "$selected_package_option" "$selected_package" >> "$0"".log"
+                fi
+        done
+}
+
+main $@

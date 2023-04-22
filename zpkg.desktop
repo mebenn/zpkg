@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=0.01
+Type=Application
+Name=zpkg
+GenericName=pkg
+Comment=pkg GUI using Zenity for OpenIndiana under development
+TryExec=/usr/local/bin/zpkg
+Terminal=false
+Exec=/usr/local/bin/zpkg
+StartupWMClass=zpkg
+Icon=
+Categories=PackageManager;GTK;System;Settings;
+Keywords=system;PackageManager
