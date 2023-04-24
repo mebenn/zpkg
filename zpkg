@@ -516,7 +516,7 @@ process_selected_package_option()
         if [ "$this_opt" == "Information" ]; then
                 zenity --info   --window-icon="$oilogo" --title "Information on $selected_package" \
                        --text   "$(pkg $info $selected_package)"
-        elif [ "$this_opt" == "List files" ]; then
+        elif [ "$this_opt" == "List" ]; then
                 zenity --list --width=$the_x --height=$the_y \
                        --window-icon="$oilogo" \
                        --title "List of files in $selected_package"\
